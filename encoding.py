@@ -25,7 +25,6 @@ from hyperopt import STATUS_OK, hp
 from hyperopt.pyll.stochastic import sample
 import utils
 
-
 #%%
 train = pd.read_parquet(r'.\data\train.parquet').reset_index().drop(['id'], axis = 1)
 Y = 'label'
@@ -109,7 +108,7 @@ def objective_ensemble(params, n_folds = 4):
 #hypertune our ensemble model
 from hyperopt import tpe, Trials, fmin
 
-n_iters = 3
+n_iters = 2
 tpe_algorithm = tpe.suggest
 bayesian_trials_ensemble = Trials()
 
@@ -135,8 +134,9 @@ X_train, one_hot_cols, one_hot_num_cols, numeric_cols, target_cols, emb_cols = u
 
 #build and fit our final pipeline with best hyperparameter values
 final_pipeline = utils.build_and_fit_pipeline(X_train, y_train
+                                                ,one_hot_cols, one_hot_num_cols, numeric_cols, target_cols, emb_cols
                                                 ,p_n_estimators=bayesian_results_ensemble['params']['n_estimators']
-                                                ,p_n_learning_rate=bayesian_results_ensemble['params']['learning_rate']
+                                                ,p_learning_rate=bayesian_results_ensemble['params']['learning_rate']
                                                 ,p_max_depth=bayesian_results_ensemble['params']['max_depth']
                                                 ,p_reg_alpha=bayesian_results_ensemble['params']['reg_alpha']
                                                 ,p_reg_lambda=bayesian_results_ensemble['params']['reg_lambda']
@@ -144,26 +144,53 @@ final_pipeline = utils.build_and_fit_pipeline(X_train, y_train
                                                 ,p_min_child_samples=bayesian_results_ensemble['params']['min_child_samples']
 )
 
-#%%
-#get our final step of the pipeline
-final_model = final_pipeline.named_steps['classifier']
 
-#check our last model
-final_model
+#%%
+from joblib import dump, load 
+import pickle 
+
+dump(final_pipeline, r'.\models\final_pipeline.pkl')
+
+#%%
+#get our final step of the pipeline, the stacking classifier
+final_model = final_pipeline.named_steps['classifier']
+final_model.final_estimator_
+
+#%%
+#get real feature names from the preprocessors
+cat_names = list(final_pipeline['preprocess'].transformers_[0][1][0].get_feature_names(one_hot_cols))
+cat_num_names = list(final_pipeline['preprocess'].transformers_[1][1][0].get_feature_names(one_hot_num_cols))
 
 #%%
 #since it is a logistic regression model we'll relay on the coefficients, in scale
-feature_importance = abs(final_model.coef_[0])
+feature_importance = abs(final_model.final_estimator_.coef_[0])
 feature_importance = 100.0 * (feature_importance / feature_importance.max())
 sorted_idx = np.argsort(feature_importance)
 pos = np.arange(sorted_idx.shape[0]) + .5
 
+#original names
+train_columns = list(X_train.columns)
+
+#drop one-hot-encoded original names
+train_columns = list(set(train_columns) - set(one_hot_cols))
+train_columns = list(set(train_columns) - set(one_hot_num_cols))
+
+#scores from the estimators
+estimator_feats = ['lr_est', 'lgb_1_est', 'ada_est', 'lgb2_est', 'lgb3_est']
+
+cat_names.extend(cat_num_names)
+cat_names.extend(train_columns)
+cat_names.extend(estimator_feats)
+cat_names
+
+#%%
+
 #plot
-featfig = plt.figure()
+featfig = plt.figure(figsize=(10, 10))
 featax = featfig.add_subplot(1, 1, 1)
 featax.barh(pos, feature_importance[sorted_idx], align='center')
 featax.set_yticks(pos)
-featax.set_yticklabels(np.array(X.columns)[sorted_idx], fontsize=8)
+featax.set_yticklabels(np.array(cat_names)[sorted_idx], fontsize=12)
 featax.set_xlabel('Relative Feature Importance')
 
 plt.tight_layout()   

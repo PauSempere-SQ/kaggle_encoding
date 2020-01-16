@@ -155,10 +155,9 @@ def build_and_fit_pipeline(
         , ('lightgbm_3', lgb_3)
     ]
 
-    #score = make_scorer(roc_auc_score, greater_is_better = True)
     clf = StackingClassifier(
-            estimators = classifiers, passthrough=True, final_estimator=lr, 
-            n_jobs = 2 #not to overflow our 
+            estimators = classifiers, passthrough=True, final_estimator=lr
+            , n_jobs = 2 #not to overflow our cores
             , cv = 3
     )
 

@@ -184,7 +184,6 @@ cat_names.extend(estimator_feats)
 cat_names
 
 #%%
-
 #plot
 featfig = plt.figure(figsize=(10, 10))
 featax = featfig.add_subplot(1, 1, 1)

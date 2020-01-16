@@ -240,5 +240,3 @@ final_submission['target'] = pd.DataFrame(submission_preds)[1]
 
 #%%
 final_submission.to_csv(r'.\data\submission_00.csv', index = False)
-
-# %%

@@ -3,7 +3,7 @@ import pandas as pd
 import lightgbm as lg 
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.feature_selection import RFE, RFECV
-import imblearn as imb
+#import imblearn as imb
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier, StackingClassifier, ExtraTreesClassifier,VotingClassifier
 import sklearn.preprocessing as prep 
@@ -12,21 +12,21 @@ from category_encoders import TargetEncoder
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer, SimpleImputer
 import numpy as np 
-from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix, classification_report
+from sklearn.metrics import plot_confusion_matrix, plot_roc_curve, plot_precision_recall_curve, roc_auc_score, roc_curve, confusion_matrix, classification_report
 import matplotlib.pyplot as plt 
 from sklearn.pipeline import Pipeline, FeatureUnion, make_pipeline
 from sklearn.compose import ColumnTransformer, make_column_transformer
-from sklearn.decomposition import PCA
-from imblearn import over_sampling, ensemble, combine, under_sampling
-from imblearn import pipeline as imb_pipe
-import mlens.ensemble as ens 
-from mlens.metrics import make_scorer
+#from imblearn import over_sampling, ensemble, combine, under_sampling
+#from imblearn import pipeline as imb_pipe
+#import mlens.ensemble as ens 
+#from mlens.metrics import make_scorer
 from hyperopt import STATUS_OK, hp
 from hyperopt.pyll.stochastic import sample
 import utils
-
 #%%
 train = pd.read_parquet(r'.\data\train.parquet').reset_index().drop(['id'], axis = 1)
+#subsample for dev
+#train = train.head(10000)
 Y = 'label'
 y = train[Y]
 train = train.drop([Y], axis = 1)
@@ -34,6 +34,11 @@ train = train.drop([Y], axis = 1)
 X_train, X_test, y_train, y_test = train_test_split(train, y, test_size = 0.2,stratify = y, random_state = 42)
 X_train.head(10)
 print(y.value_counts())
+
+#%%
+#debug 
+X_train, one_hot_cols, one_hot_num_cols, numeric_cols, target_cols, emb_cols = utils.remove_nas(X_train)
+print(target_cols, numeric_cols)
 
 # %%
 #new parameter space using hyperopt functions. They are mostly inspired in scipy and numpy distribution functions
@@ -92,7 +97,7 @@ def objective_ensemble(params, n_folds = 4):
         auc = round(roc_auc_score(y_test_k, probs), 3)
         print('AUC: %.3f' % auc)
 
-        print(confusion_matrix(y_test_k, preds))
+        plot_confusion_matrix(estimator = final_pipeline, X = X_train_k, y_true = y_train_k)
 
         res.append(auc)
 
@@ -108,7 +113,7 @@ def objective_ensemble(params, n_folds = 4):
 #hypertune our ensemble model
 from hyperopt import tpe, Trials, fmin
 
-n_iters = 2
+n_iters = 3
 tpe_algorithm = tpe.suggest
 bayesian_trials_ensemble = Trials()
 
@@ -144,7 +149,6 @@ final_pipeline = utils.build_and_fit_pipeline(X_train, y_train
                                                 ,p_min_child_samples=bayesian_results_ensemble['params']['min_child_samples']
 )
 
-
 #%%
 from joblib import dump, load 
 import pickle 
@@ -162,26 +166,34 @@ cat_names = list(final_pipeline['preprocess'].transformers_[0][1][0].get_feature
 cat_num_names = list(final_pipeline['preprocess'].transformers_[1][1][0].get_feature_names(one_hot_num_cols))
 
 #%%
+transformer = final_pipeline['preprocess'].transformers_[0][1][0]
+len(transformer.cols)
+
+#%%
+target_cols.sort()
+target_feats = list(transformer.feature_names)
+target_feats.sort()
+print(target_cols , '\n', target_feats)
+
+#%%
 #since it is a logistic regression model we'll relay on the coefficients, in scale
 feature_importance = abs(final_model.final_estimator_.coef_[0])
 feature_importance = 100.0 * (feature_importance / feature_importance.max())
 sorted_idx = np.argsort(feature_importance)
 pos = np.arange(sorted_idx.shape[0]) + .5
 
-#original names
-train_columns = list(X_train.columns)
+#feature names, only one transformer
+train_columns = list(transformer.feature_names)
 
 #drop one-hot-encoded original names
 train_columns = list(set(train_columns) - set(one_hot_cols))
 train_columns = list(set(train_columns) - set(one_hot_num_cols))
 
 #scores from the estimators
-estimator_feats = ['lr_est', 'lgb_1_est', 'ada_est', 'lgb2_est', 'lgb3_est']
+estimator_feats = ['ada_1', 'lgb_1_est', 'ada_2', 'lgb2_est', 'lgb3_est']
 
-cat_names.extend(cat_num_names)
-cat_names.extend(train_columns)
-cat_names.extend(estimator_feats)
-cat_names
+train_columns.extend(estimator_feats)
+print(len(train_columns), len(feature_importance), len(sorted_idx), len(pos))
 
 #%%
 #plot
@@ -189,7 +201,7 @@ featfig = plt.figure(figsize=(10, 10))
 featax = featfig.add_subplot(1, 1, 1)
 featax.barh(pos, feature_importance[sorted_idx], align='center')
 featax.set_yticks(pos)
-featax.set_yticklabels(np.array(cat_names)[sorted_idx], fontsize=12)
+featax.set_yticklabels(np.array(train_columns)[sorted_idx], fontsize=12)
 featax.set_xlabel('Relative Feature Importance')
 
 plt.tight_layout()   
@@ -205,13 +217,11 @@ auc = round(roc_auc_score(y_test, probs), 3)
 print('AUC: %.3f' % auc)
 
 #%%
-#preds = final_pipeline.predict(X = X_test)
-#print(roc_auc_score(y_test, preds))
-utils.get_roc_curve(X_train, y_train, X_test, y_test, final_pipeline)
+plot_roc_curve(final_pipeline,X_test,y_test)
 
 #%%
 #train with full data to get ready for submission 
-train, one_hot_cols, one_hot_num_cols, numeric_cols, target_cols = utils.remove_nas(train)
+train, one_hot_cols, one_hot_num_cols, numeric_cols, target_cols, emb_cols = utils.remove_nas(train)
 
 #%%
 final_pipeline.fit(X = train, y = y)
@@ -239,3 +249,6 @@ final_submission['target'] = pd.DataFrame(submission_preds)[1]
 
 #%%
 final_submission.to_csv(r'.\data\submission_00.csv', index = False)
+
+
+# %%
